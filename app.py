@@ -9,6 +9,14 @@ from datetime import datetime
 st.set_page_config(page_title="MANNA Weigher App (Fake)", layout="wide")
 
 # -------------------------
+# Session state for button color
+# -------------------------
+if "weigh_result" not in st.session_state:
+    st.session_state.weigh_result = None  # None | "success" | "error"
+if "weigh_msg" not in st.session_state:
+    st.session_state.weigh_msg = ""
+
+# -------------------------
 # DB setup
 # -------------------------
 conn = sqlite3.connect("weigher.db", check_same_thread=False)
@@ -38,6 +46,7 @@ conn.commit()
 # Helpers
 # -------------------------
 def fake_scale_read_grams():
+    # later replace with serial read for CPWPlus 150
     return random.randint(150, 1200)
 
 def upsert_order(order_number: str, total_eur: float, items_text: str, status: str):
@@ -145,6 +154,10 @@ st.markdown("""
   border: 0 !important;
 }
 
+/* Dynamic Weigh button color */
+.weigh-success button { background: #16a34a !important; } /* green */
+.weigh-error button { background: #dc2626 !important; }   /* red */
+
 /* remove extra spacing under buttons */
 div[data-testid="stButton"] { margin-bottom: 0.4rem; }
 </style>
@@ -166,9 +179,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # -------------------------
-# One-page flow:
-# left = create/update fake order
-# right = "real" support view + weigh actions
+# One-page flow
 # -------------------------
 left, right = st.columns([1, 1.8], gap="large")
 
@@ -184,7 +195,7 @@ with left:
     )
     status = st.selectbox("Status", ["STORE_PREPARING", "READY_FOR_COLLECTION", "CANCELLED"], index=0)
 
-    if st.button("Create / Update Order"):
+    if st.button("Create / Update Order", key="create_update_order"):
         if not order_number.strip():
             st.error("Order number is required.")
         else:
@@ -192,7 +203,6 @@ with left:
             st.success("Order saved ✅")
 
 with right:
-    # Load order from DB
     order = get_order(order_number.strip()) if order_number.strip() else None
 
     st.markdown('<div class="order-card">', unsafe_allow_html=True)
@@ -238,27 +248,58 @@ with right:
 
         with b1:
             st.markdown('<div class="bigbtn-ghost">', unsafe_allow_html=True)
-            if st.button("Received"):
+            if st.button("Received", key="received_btn"):
                 st.info("Received pressed (fake for now).")
             st.markdown("</div>", unsafe_allow_html=True)
 
         with b2:
-            st.markdown('<div class="bigbtn">', unsafe_allow_html=True)
-            if st.button("Weigh"):
-                weight = fake_scale_read_grams()
-                insert_weigh_event(o_num, weight, source="FAKE_SCALE")
-                st.success(f"Captured weight: {weight} g")
-                st.rerun()
+            # Set Weigh button color based on last result
+            cls = "bigbtn"
+            if st.session_state.weigh_result == "success":
+                cls = "bigbtn weigh-success"
+            elif st.session_state.weigh_result == "error":
+                cls = "bigbtn weigh-error"
+
+            st.markdown(f'<div class="{cls}">', unsafe_allow_html=True)
+
+            if st.button("Weigh", key="weigh_btn"):
+                try:
+                    # Fake read now (swap later for RS232->USB read)
+                    weight = fake_scale_read_grams()
+
+                    # Store
+                    insert_weigh_event(o_num, weight, source="FAKE_SCALE")
+
+                    # Update UI state -> green
+                    st.session_state.weigh_result = "success"
+                    st.session_state.weigh_msg = f"Stored weight {weight} g ✅"
+                    st.rerun()
+                except Exception as e:
+                    # Update UI state -> red
+                    st.session_state.weigh_result = "error"
+                    st.session_state.weigh_msg = f"Failed to store weight ❌ ({e})"
+                    st.rerun()
+
             st.markdown("</div>", unsafe_allow_html=True)
+
+            if st.session_state.weigh_msg:
+                if st.session_state.weigh_result == "success":
+                    st.success(st.session_state.weigh_msg)
+                elif st.session_state.weigh_result == "error":
+                    st.error(st.session_state.weigh_msg)
 
         with b3:
             st.markdown('<div class="bigbtn-secondary">', unsafe_allow_html=True)
-            if st.button("Extra Order"):
+            if st.button("Extra Order", key="extra_order_btn"):
                 st.info("Extra Order pressed (fake for now).")
             st.markdown("</div>", unsafe_allow_html=True)
 
     else:
         st.markdown("Enter an order number and click **Create / Update Order** on the left.")
+        # reset weigh state if no order loaded
+        st.session_state.weigh_result = None
+        st.session_state.weigh_msg = ""
+
     st.markdown("</div>", unsafe_allow_html=True)
 
 st.write("")
